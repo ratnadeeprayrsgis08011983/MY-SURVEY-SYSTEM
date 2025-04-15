@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Survey</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 10px;
+      background: #f9f9f9;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      border: 1px solid #0077cc;
+      padding: 15px;
+      background-color: white;
+    }
+    h1 {
+      text-align: center;
+    }
+    .section {
+      border: 1px solid #0077cc;
+      padding: 10px;
+      margin-top: 10px;
+    }
+    .section input, .section textarea, .section select, .section button {
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 5px;
+      box-sizing: border-box;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+    }
+    .row input, .row select, .row button {
+      flex: 1;
+    }
+    .image-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .image-preview {
+      width: 100px;
+      height: 100px;
+      border: 1px solid #ccc;
+      object-fit: cover;
+      display: block;
+      margin-top: 5px;
+      margin-bottom: 10px;
+    }
+    .map-section {
+      margin-top: 10px;
+    }
+    #map {
+      height: 300px;
+      width: 100%;
+    }
+    .button-group button {
+      width: 32%;
+    }
+    .center-button {
+      display: flex;
+      justify-content: center;
+      margin: 15px 0;
+    }
+    .poi-card {
+      border: 1px solid #0077cc;
+      padding: 10px;
+      margin-top: 10px;
+      background-color: #eef9ff;
+    }
+    .poi-card img {
+      width: 100%;
+      max-height: 150px;
+      object-fit: cover;
+    }
+    @media (max-width: 480px) {
+      .row {
+        flex-direction: column;
+      }
+      .button-group button {
+        width: 100%;
+        margin-bottom: 5px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>MY SURVEY SYSTEM</h1>
+
+    <div class="section">
+      <input type="text" placeholder="Name of Surveyor" id="surveyorName">
+      <input type="text" placeholder="Contact No." id="contact">
+      <input type="date" id="surveyDate">
+      <div class="image-row">
+        <div>
+          <label>Photo:</label>
+          <input type="file" id="surveyorPhotoInput" accept="image/*" onchange="previewImage(this, 'surveyorPhoto')">
+          <img id="surveyorPhoto" class="image-preview" />
+        </div>
+        <div>
+          <label>Signature:</label>
+          <input type="file" id="surveyorSignInput" accept="image/*" onchange="previewImage(this, 'surveyorSign')">
+          <img id="surveyorSign" class="image-preview" />
+        </div>
+      </div>
+    </div>
+
+    <div class="center-button">
+      <button onclick="startSurvey()">Start Survey</button>
+    </div>
+
+    <div class="section">
+      <div class="row">
+        <input type="text" id="poiId" placeholder="ID of POI" readonly>
+        <input type="text" id="poiName" placeholder="Name of POI">
+      </div>
+      <div class="row">
+        <select id="poiType" onchange="toggleOtherTypeInput()">
+          <option value="">Select Type</option>
+          <option value="School">School</option>
+          <option value="Hospital">Hospital</option>
+          <option value="Shop">Shop</option>
+          <option value="Temple">Temple</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="row" id="otherTypeRow" style="display:none">
+        <input type="text" id="otherType" placeholder="Specify Other Type">
+      </div>
+      <div class="row">
+        <input type="text" id="latitude" placeholder="Latitude" readonly>
+        <input type="text" id="longitude" placeholder="Longitude" readonly>
+      </div>
+      <div class="image-row">
+        <input type="file" id="poiPhotoInput" accept="image/*" onchange="previewImage(this, 'poiPhoto')">
+        <img id="poiPhoto" class="image-preview" />
+      </div>
+      <textarea id="description" placeholder="Description"></textarea>
+      <button onclick="addPOI()">Add POI</button>
+    </div>
+
+    <h3 style="text-align:center; color:#0077cc;">Map View</h3>
+    <div class="map-section">
+      <div id="map"></div>
+    </div>
+
+    <div class="button-group" style="display:flex; justify-content: space-between; margin-top:10px;">
+      <button onclick="downloadKML()">Download KML</button>
+      <button onclick="exportToPDF()">Export to PDF</button>
+      <button onclick="clearAll()">Clear All</button>
+    </div>
+
+    <div id="poiCards"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script>
+    let poiData = [];
+    let map;
+    let track = [];
+    let poiLayer;
+    let selectedLatLng = null;
+    let trackLine;
+    let gpsMarker;
+
+    function toggleOtherTypeInput() {
+      const poiType = document.getElementById('poiType').value;
+      const otherRow = document.getElementById('otherTypeRow');
+      otherRow.style.display = poiType === 'Other' ? 'flex' : 'none';
+    }
+
+    function startSurvey() {
+      map = L.map('map').setView([22.57, 88.36], 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+
+      poiLayer = L.layerGroup().addTo(map);
+
+      map.on('click', function(e) {
+        selectedLatLng = e.latlng;
+        document.getElementById('latitude').value = selectedLatLng.lat.toFixed(6);
+        document.getElementById('longitude').value = selectedLatLng.lng.toFixed(6);
+      });
+
+      if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(pos => {
+          const latlng = [pos.coords.latitude, pos.coords.longitude];
+          track.push(latlng);
+
+          if (trackLine) map.removeLayer(trackLine);
+          trackLine = L.polyline(track, { color: 'blue' }).addTo(map);
+
+          if (gpsMarker) gpsMarker.setLatLng(latlng);
+          else gpsMarker = L.circle(latlng, { radius: 5, color: 'red' }).addTo(map);
+
+          map.setView(latlng, 16);
+        });
+      } else {
+        alert("Geolocation is not supported by this browser.");
+      }
+    }
+
+    function previewImage(input, imgId) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        document.getElementById(imgId).src = e.target.result;
+      }
+      reader.readAsDataURL(input.files[0]);
+    }
+
+    function addPOI() {
+      if (poiData.length >= 100) return alert('Max 100 POIs allowed');
+      if (!selectedLatLng) return alert('Please select a location on map.');
+
+      const id = poiData.length + 1;
+      const name = document.getElementById('poiName').value;
+      let type = document.getElementById('poiType').value;
+      const lat = selectedLatLng.lat.toFixed(6);
+      const lng = selectedLatLng.lng.toFixed(6);
+      const description = document.getElementById('description').value;
+      const img = document.getElementById('poiPhoto').src;
+
+      if (type === 'Other') {
+        const otherTypeValue = document.getElementById('otherType').value;
+        if (!otherTypeValue) return alert('Please specify the other type');
+        type = otherTypeValue;
+      }
+
+      document.getElementById('poiId').value = id;
+      const poi = { id, name, type, lat, lng, description, img };
+      poiData.push(poi);
+      L.marker([lat, lng]).addTo(poiLayer).bindPopup(`${type}: ${name}`);
+
+      const cardHTML = `
+        <div class="poi-card">
+          <strong>${id}. ${name}</strong><br>
+          <em>Type:</em> ${type}<br>
+          <em>Lat:</em> ${lat}, <em>Lng:</em> ${lng}<br>
+          <em>Description:</em> ${description}<br>
+          ${img ? `<img src="${img}" />` : ''}
+        </div>`;
+      document.getElementById('poiCards').insertAdjacentHTML('beforeend', cardHTML);
+
+      document.getElementById('poiName').value = "";
+      document.getElementById('poiType').value = "";
+      document.getElementById('otherType').value = "";
+      document.getElementById('otherTypeRow').style.display = "none";
+      document.getElementById('description').value = "";
+      document.getElementById('poiPhoto').src = "";
+      document.getElementById('poiPhotoInput').value = "";
+    }
+
+    function downloadKML() {
+      let kml = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>';
+      poiData.forEach(p => {
+        kml += `<Placemark><name>${p.name}</name><description>${p.type} - ${p.description}</description><Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>`;
+      });
+      kml += '</Document></kml>';
+      const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'POIs.kml';
+      a.click();
+    }
+
+    async function exportToPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const surveyor = document.getElementById('surveyorName').value;
+      const contact = document.getElementById('contact').value;
+      const date = document.getElementById('surveyDate').value;
+      const surveyorImg = document.getElementById('surveyorPhoto').src;
+      const signImg = document.getElementById('surveyorSign').src;
+
+      doc.setFontSize(16);
+      doc.text(`Survey Report`, 80, 10);
+      doc.setFontSize(12);
+      doc.text(`Surveyor: ${surveyor}`, 10, 20);
+      doc.text(`Contact: ${contact}`, 10, 30);
+      doc.text(`Date: ${date}`, 10, 40);
+
+      if (surveyorImg) doc.addImage(surveyorImg, 'JPEG', 140, 10, 50, 50);
+      if (signImg) doc.addImage(signImg, 'JPEG', 140, 65, 50, 20);
+
+      let y = 90;
+      poiData.forEach((p, i) => {
+        if (y > 270) {
+          doc.addPage();
+          y = 10;
+        }
+        doc.text(`POI ${i + 1} - ${p.name} (${p.type})`, 10, y);
+        doc.text(`Lat: ${p.lat}, Lng: ${p.lng}`, 10, y + 10);
+        doc.text(`Desc: ${p.description}`, 10, y + 20);
+        if (p.img) doc.addImage(p.img, 'JPEG', 130, y, 40, 30);
+        y += 40;
+      });
+      doc.save("Survey_Report.pdf");
+    }
+
+    function clearAll() {
+      location.reload();
+    }
+  </script>
+</body>
+</html>
